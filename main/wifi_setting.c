@@ -3,11 +3,17 @@
     https://github.com/espressif/esp-idf/tree/8fc8f3f47997aadba21facabc66004c1d22de181/examples/wifi/getting_started/station
 */
 
+#include <stdio.h>
 #include "esp_wifi.h"
+#include "esp_log.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "esp_system.h"
+#include "freertos/event_groups.h"
 
 
 /*Custom Header*/
-#include "startup.h"
+#include "configuration.h"
 #include "led_setting.h"
 
 /* FreeRTOS event group to signal when we are connected*/
@@ -18,13 +24,6 @@ static EventGroupHandle_t s_wifi_event_group;
  * - we failed to connect after the maximum amount of retries */
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT BIT1
-
-
-/*
-    Change ESP_WIFI_SSID & ESP_WIFI_PASS to the settings of your WIFI AP
-*/
-//#define ESP_WIFI_SSID "FRITZ!Box 6660 Cable CD"
-//#define ESP_WIFI_PASS "71287349389355627084"
 
 #define ESP_MAXIMUM_RETRY 5
 #define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD WIFI_AUTH_WPA2_PSK

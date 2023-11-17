@@ -1,17 +1,32 @@
+/*
+    Program to get Sensordata and send them via WiFi to localhost
+*/
+
+#include <stdio.h>
 #include "nvs_flash.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/idf_additions.h"
+#include "freertos/event_groups.h"
+#include "freertos/semphr.h"
+#include "esp_log.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "esp_system.h"
 
 // Header is used for commuicating with Webserver in TCP or UDP
 #include <sys/socket.h>
 
 // Custom Headerfiles
-#include "startup.h"
+#include "configuration.h"
 #include "wifi_setting.h"
 #include "led_setting.h"
+#include "ringbuffer.h"
 //#include "http_client.h"
 
 #define RINGBUFFER_SIZE 50
-#define SENSOR_RATE (1/44000) // Frequency 44kHz
+#define SENSOR_RATE (1000000/44000) // Frequency 44kHz --> ~23 us
 
 const char *tag_ringbuffer1 = "ringbuffer1";
 const char *tag_ringbuffer2 = "ringbuffer2";
@@ -20,6 +35,8 @@ const char *tag_tcp = "TCP";
 // Global Variables
 ringbuffer_handle_t *ringbuffer1;
 ringbuffer_handle_t *ringbuffer2;
+int lastBufferWritten = 2;
+uint32_t testVar = 0;
 int sock;
 
 // Mutexes for ringbuffer
@@ -28,28 +45,76 @@ SemaphoreHandle_t ringbuffer2_mutex;
 
 void write_task(void *pvParameters)
 {   
-    uint32_t testVar = 0;
+    // Writing to first ringbuffer
+    // First Check which Buffer was written last / INIT-Value lastBufferValue = 2
+    if(lastBufferWritten == 2)
+    {
+        // Check if Function is Mutex-Holder of Ringbuffer
+        if(!xSemaphoreGetMutexHolder(ringbuffer1_mutex))
+        {
+            // If not Mutex-Holder, Mutex will be taken an then it will be checked, if the Buffer is full
+            // If Buffer is full the Mutex will be released, else a Sensorvalue will be written to Buffer
+            xSemaphoreTake(ringbuffer1_mutex, (TickType_t) portMAX_DELAY);
+            if(!is_full(ringbuffer1))
+            {
+                write_to_buffer(ringbuffer1, testVar);
+                //ESP_LOGI(tag_ringbuffer1, "First WriteIndex: %d, IsFull: %d, Value: %lu", ringbuffer1->writeIndex, ringbuffer1->full, testVar);
+                testVar = testVar + 1;
+            }
+            else
+            {
+                xSemaphoreGive(ringbuffer1_mutex);
+            }
+        }
+        // When the Mutex is hold by Task, a Sensorvalue will be written to Buffer
+        // When Buffer is full, Mutex will be given and lastBufferWritten set to 1
+        else
+        {
+            write_to_buffer(ringbuffer1, testVar);
+            //ESP_LOGI(tag_ringbuffer1, "WriteIndex: %d, IsFull: %d, Value: %lu", ringbuffer1->writeIndex, ringbuffer1->full, testVar);
+            testVar = testVar + 1;
 
-    xSemaphoreTake(ringbuffer1_mutex, (TickType_t) portMAX_DELAY);
-    while(!is_full(ringbuffer1))
-    {
-        write_to_buffer(ringbuffer1, testVar);
-        testVar++;
-        ESP_LOGI(tag_ringbuffer1, "WriteIndex: %d, IsFull: %d", ringbuffer1->writeIndex, ringbuffer1->full); 
+            if(is_full(ringbuffer1))
+            {
+                xSemaphoreGive(ringbuffer1_mutex);
+                lastBufferWritten = 1;
+                testVar = 0;
+            }
+        }
     }
-    testVar = 0;
-    xSemaphoreGive(ringbuffer1_mutex);
-             
-        
-    xSemaphoreTake(ringbuffer2_mutex, (TickType_t) portMAX_DELAY);
-    while(!is_full(ringbuffer2))
+
+    // Writing to second Ringbuffer
+    // Function same es for Ringbuffer 1
+    if(lastBufferWritten == 1)
     {
-        write_to_buffer(ringbuffer2, testVar);
-        testVar++;
-        ESP_LOGI(tag_ringbuffer2, "WriteIndex: %d, IsFull: %d", ringbuffer2->writeIndex, ringbuffer2->full); 
+        if(!xSemaphoreGetMutexHolder(ringbuffer2_mutex))
+        {
+            xSemaphoreTake(ringbuffer2_mutex, (TickType_t) portMAX_DELAY);
+            if(!is_full(ringbuffer2))
+            {
+                write_to_buffer(ringbuffer2, testVar);
+                //ESP_LOGI(tag_ringbuffer2, "WriteIndex: %d, IsFull: %d", ringbuffer2->writeIndex, ringbuffer2->full);
+                testVar = testVar + 1;
+            }
+            else
+            {
+                xSemaphoreGive(ringbuffer2_mutex);
+            }
+        }
+        else
+        {
+            write_to_buffer(ringbuffer2, testVar);
+            //ESP_LOGI(tag_ringbuffer2, "WriteIndex: %d, IsFull: %d", ringbuffer2->writeIndex, ringbuffer2->full);
+            testVar = testVar + 1;
+
+            if(is_full(ringbuffer2))
+            {
+                xSemaphoreGive(ringbuffer2_mutex);
+                lastBufferWritten = 2;
+                testVar = 0;
+            }
+        }
     }
-    testVar = 0;
-    xSemaphoreGive(ringbuffer2_mutex);
 
 }
 
@@ -70,9 +135,9 @@ void init_nvs(void)
 void connect_tcp(void)
 {
     struct sockaddr_in dest_addr;
-    dest_addr.sin_addr.s_addr = inet_addr(HOSTNAME_WEBSERVER);
+    dest_addr.sin_addr.s_addr = inet_addr(LOCALHOST_ADDRESS);
     dest_addr.sin_family = AF_INET;
-    dest_addr.sin_port = htons(80);
+    dest_addr.sin_port = htons(LOCALHOST_PORT);
 
 
     sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -81,7 +146,7 @@ void connect_tcp(void)
         ESP_LOGI(tag_tcp, "Unable to create socket: errno %d", errno);
         return;
     }
-    ESP_LOGI(tag_tcp, "Socket created, connecting to %s, %d", HOSTNAME_WEBSERVER, 80);
+    ESP_LOGI(tag_tcp, "Socket created, connecting to %s, %d", LOCALHOST_ADDRESS, 80);
 
     int err = connect(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
     if (err == ESP_OK)
@@ -95,51 +160,60 @@ void connect_tcp(void)
 void tcp_send(void *pvParameters)
 {
     int err;
+    int lastBufferRead = 2;
     uint32_t buffer_array[RINGBUFFER_SIZE] = {0};
 
     while(1)
     {
         int counter = 0;
-        xSemaphoreTake(ringbuffer1_mutex, (TickType_t) portMAX_DELAY);
-        if (is_full(ringbuffer1))
+        if (lastBufferRead == 2)
         {
-            while (is_full(ringbuffer1))
+            xSemaphoreTake(ringbuffer1_mutex, (TickType_t) portMAX_DELAY);
+            if (is_full(ringbuffer1))
             {
-                buffer_array[counter] = read_from_buffer(ringbuffer1);
-                counter++;
-                ESP_LOGI(tag_ringbuffer1, "ReadIndex: %d, IsFull: %d", ringbuffer1->readIndex, ringbuffer1->full);
+                while (is_full(ringbuffer1))
+                {
+                    buffer_array[counter] = read_from_buffer(ringbuffer1);
+                    counter++;
+                    //ESP_LOGI(tag_ringbuffer1, "ReadIndex: %d, IsFull: %d", ringbuffer1->readIndex, ringbuffer1->full);
+                }
+            xSemaphoreGive(ringbuffer1_mutex);
             }
-            xSemaphoreGive(ringbuffer1_mutex);
-        }
-        else
-        {
-            xSemaphoreGive(ringbuffer1_mutex);
-        }
-
-        xSemaphoreTake(ringbuffer2_mutex, (TickType_t) portMAX_DELAY);
-        if (is_full(ringbuffer2))
-        {
-            while (is_full(ringbuffer2))
+            else
             {
-                buffer_array[counter] = read_from_buffer(ringbuffer2);
-                counter++;
-                ESP_LOGI(tag_ringbuffer2, "ReadIndex: %d, IsFull: %d", ringbuffer2->readIndex, ringbuffer2->full);
+                xSemaphoreGive(ringbuffer1_mutex);
             }
-            xSemaphoreGive(ringbuffer2_mutex);
+            lastBufferRead = 1;
         }
-        else
+        
+        if (lastBufferRead == 1)
         {
-            xSemaphoreGive(ringbuffer2_mutex);
+            xSemaphoreTake(ringbuffer2_mutex, (TickType_t) portMAX_DELAY);
+            if (is_full(ringbuffer2))
+            {
+                while (is_full(ringbuffer2))
+                {
+                    buffer_array[counter] = read_from_buffer(ringbuffer2);
+                    counter++;
+                    //ESP_LOGI(tag_ringbuffer2, "ReadIndex: %d, IsFull: %d", ringbuffer2->readIndex, ringbuffer2->full);
+                }
+                xSemaphoreGive(ringbuffer2_mutex);
+            }
+            else
+            {
+                xSemaphoreGive(ringbuffer2_mutex);
+            }
+            lastBufferRead = 2;    
         }
 
         for(int i = 0; i < RINGBUFFER_SIZE; i++)
         {
             buffer_array[i] = htonl(buffer_array[i]); 
-        }                        
+        }                              
         err = send(sock, &buffer_array, sizeof(buffer_array), 0);
         if (err < 0)
         {
-            ESP_LOGI(tag_tcp, "Send failed! errno: %d", errno);
+            ESP_LOGE(tag_tcp, "Send failed! errno: %d", errno);
         }
         else
         {
@@ -158,8 +232,6 @@ void app_main(void)
         .arg = NULL,
         .name = "sensor_timer",
     };
-
-    esp_timer_create(&sensor_timer_args, &sensor_timer);
 
     // Initialisation of the LED, NVS, WIFI and the HTTP-Socket
     config_led();
@@ -180,16 +252,14 @@ void app_main(void)
         ESP_LOGI(tag_ringbuffer2, "Ringbuffer 2 created succesfully!");
     }
 
-
     connect_tcp();
 
     ringbuffer1_mutex = xSemaphoreCreateMutex();
     ringbuffer2_mutex = xSemaphoreCreateMutex();
 
-    //xTaskCreate(&write_task, "write_task", 2048, NULL, 10, NULL);
+    esp_timer_create(&sensor_timer_args, &sensor_timer);
     esp_timer_start_periodic(sensor_timer, SENSOR_RATE);
 
-    //xTaskCreate(&tcp_send, "tcp_send", 2048, NULL, 5, NULL);
     xTaskCreatePinnedToCore(&tcp_send, "tcp_send", 4096, NULL, 5, NULL, 1);
     
 }

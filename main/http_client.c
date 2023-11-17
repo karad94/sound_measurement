@@ -1,9 +1,14 @@
+#include <stdio.h>
 #include "esp_http_client.h"
+#include "esp_log.h"
+
+
 //Include for Change to HTTPS
 //#include "esp_tls.h"
 
 //Custom Headerfiles
-#include "startup.h"
+#include "configuration.h"
+#include "ringbuffer.h"
 
 // Defines
 static const char *TAG = "HTTP_CLIENT";
@@ -48,7 +53,7 @@ void http_setup(void)
     esp_err_t err;
 
     esp_http_client_config_t config = {
-        .url = HOSTNAME_WEBSERVER,
+        .url = LOCALHOST_ADDRESS,
         .path = "/post",
         .method = HTTP_METHOD_POST,
         .event_handler = _http_event_handler,
@@ -76,7 +81,7 @@ void http_task(ringbuffer_handle_t *buffer)
     esp_err_t err;
 
     esp_http_client_config_t config = {
-        .url = HOSTNAME_WEBSERVER,
+        .url = LOCALHOST_ADDRESS,
         .path = "/post",
         .method = HTTP_METHOD_POST,
         .event_handler = _http_event_handler,

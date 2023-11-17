@@ -1,8 +1,6 @@
 #ifndef __RINGBUFFER_H__
 #define __RINGBUFFER_H__
 
-#include "startup.h"
-
 // Deklaration Struct for Ringbuffer
 struct ringbuffer_handle{
     uint writeIndex;
