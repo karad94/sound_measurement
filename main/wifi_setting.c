@@ -1,8 +1,3 @@
-/*
-    Original Code of ESP-IDF example
-    https://github.com/espressif/esp-idf/tree/8fc8f3f47997aadba21facabc66004c1d22de181/examples/wifi/getting_started/station
-*/
-
 #include <stdio.h>
 #include "esp_wifi.h"
 #include "esp_log.h"

@@ -1,6 +1,13 @@
-/*
-    Program to get Sensordata and send them via WiFi to localhost
-*/
+/**
+ * @file main.c
+ * @author Adam Karsten (a.karsten@ostfalia.de)
+ * @brief Task to send Sensordata via Wifi to Host
+ * @version 0.3
+ * @date 2023-11-27
+ * 
+ * @copyright Copyright (c) 2023
+ * 
+ */
 
 #include <stdio.h>
 #include "nvs_flash.h"
@@ -30,7 +37,7 @@
 
 const char *tag_ringbuffer1 = "ringbuffer1";
 const char *tag_ringbuffer2 = "ringbuffer2";
-const char *tag_tcp = "TCP";
+const char *tag_socket = "Socket";
 
 // Global Variables
 ringbuffer_handle_t *ringbuffer1;
@@ -43,17 +50,57 @@ int sock;
 SemaphoreHandle_t ringbuffer1_mutex;
 SemaphoreHandle_t ringbuffer2_mutex;
 
+/**
+ * @brief Initialize non-volatile Storage to manage Wifi-Storage
+ * 
+ */
+void init_nvs(void);
+
+/**
+ * @brief Check for free Buffer and write Sensordata to Buffer until buffer_full == true
+ * 
+ * @param pvParameters NULL
+ */
+void write_task(void *pvParameters);
+
+/**
+ * @brief Initialize and Connect to TCP Socket
+ * 
+ */
+void connect_tcp(void);
+
+/**
+ * @brief Initialize and Connect to UDP Socket
+ * 
+ */
+void connect_udp(void);
+
+/**
+ * @brief If Buffer is full, the Buffer will be send to Socket, connected in connect-Task
+ * 
+ * @param pvParameters NULL
+ */
+void send_task(void *pvParameters);
+
+
+void init_nvs(void)
+{
+    // Initialize NVS
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
+    {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+}
+
 void write_task(void *pvParameters)
 {   
-    // Writing to first ringbuffer
-    // First Check which Buffer was written last / INIT-Value lastBufferValue = 2
     if(lastBufferWritten == 2)
     {
-        // Check if Function is Mutex-Holder of Ringbuffer
         if(!xSemaphoreGetMutexHolder(ringbuffer1_mutex))
         {
-            // If not Mutex-Holder, Mutex will be taken an then it will be checked, if the Buffer is full
-            // If Buffer is full the Mutex will be released, else a Sensorvalue will be written to Buffer
             xSemaphoreTake(ringbuffer1_mutex, (TickType_t) portMAX_DELAY);
             if(!is_full(ringbuffer1))
             {
@@ -66,8 +113,6 @@ void write_task(void *pvParameters)
                 xSemaphoreGive(ringbuffer1_mutex);
             }
         }
-        // When the Mutex is hold by Task, a Sensorvalue will be written to Buffer
-        // When Buffer is full, Mutex will be given and lastBufferWritten set to 1
         else
         {
             write_to_buffer(ringbuffer1, testVar);
@@ -83,8 +128,6 @@ void write_task(void *pvParameters)
         }
     }
 
-    // Writing to second Ringbuffer
-    // Function same es for Ringbuffer 1
     if(lastBufferWritten == 1)
     {
         if(!xSemaphoreGetMutexHolder(ringbuffer2_mutex))
@@ -118,20 +161,6 @@ void write_task(void *pvParameters)
 
 }
 
-// Initialize Non-Volantile-Storage
-void init_nvs(void)
-{
-    // Initialize NVS
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
-    {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
-}
-
-// Function to Create TCP WebSocket Connection to Host
 void connect_tcp(void)
 {
     struct sockaddr_in dest_addr;
@@ -143,21 +172,44 @@ void connect_tcp(void)
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0)
     {
-        ESP_LOGI(tag_tcp, "Unable to create socket: errno %d", errno);
+        ESP_LOGI(tag_socket, "Unable to create socket: errno %d", errno);
         return;
     }
-    ESP_LOGI(tag_tcp, "Socket created, connecting to %s, %d", LOCALHOST_ADDRESS, 80);
+    ESP_LOGI(tag_socket, "Socket created, connecting to %s, %d", LOCALHOST_ADDRESS, 80);
 
     int err = connect(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
     if (err == ESP_OK)
     {
-        ESP_LOGI(tag_tcp, "Successfully connected");
+        ESP_LOGI(tag_socket, "Successfully connected");
     }
 
     //close(sock);
 }
 
-void tcp_send(void *pvParameters)
+void connect_udp(void)
+{
+    struct sockaddr_in dest_addr;
+    dest_addr.sin_addr.s_addr = inet_addr(LOCALHOST_ADDRESS);
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(LOCALHOST_PORT);
+
+
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0)
+    {
+        ESP_LOGI(tag_socket, "Unable to create socket: errno %d", errno);
+        return;
+    }
+    ESP_LOGI(tag_socket, "Socket created, connecting to %s, %d", LOCALHOST_ADDRESS, 80);
+
+    int err = connect(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+    if (err == ESP_OK)
+    {
+        ESP_LOGI(tag_socket, "Successfully connected");
+    }
+}
+
+void send_task(void *pvParameters)
 {
     int err;
     int lastBufferRead = 2;
@@ -173,7 +225,7 @@ void tcp_send(void *pvParameters)
             {
                 while (is_full(ringbuffer1))
                 {
-                    buffer_array[counter] = read_from_buffer(ringbuffer1);
+                    buffer_array[counter] = htonl(read_from_buffer(ringbuffer1));
                     counter++;
                     //ESP_LOGI(tag_ringbuffer1, "ReadIndex: %d, IsFull: %d", ringbuffer1->readIndex, ringbuffer1->full);
                 }
@@ -193,7 +245,7 @@ void tcp_send(void *pvParameters)
             {
                 while (is_full(ringbuffer2))
                 {
-                    buffer_array[counter] = read_from_buffer(ringbuffer2);
+                    buffer_array[counter] = htonl(read_from_buffer(ringbuffer2));
                     counter++;
                     //ESP_LOGI(tag_ringbuffer2, "ReadIndex: %d, IsFull: %d", ringbuffer2->readIndex, ringbuffer2->full);
                 }
@@ -206,18 +258,14 @@ void tcp_send(void *pvParameters)
             lastBufferRead = 2;    
         }
 
-        for(int i = 0; i < RINGBUFFER_SIZE; i++)
-        {
-            buffer_array[i] = htonl(buffer_array[i]); 
-        }                              
         err = send(sock, &buffer_array, sizeof(buffer_array), 0);
         if (err < 0)
         {
-            ESP_LOGE(tag_tcp, "Send failed! errno: %d", errno);
+            ESP_LOGE(tag_socket, "Send failed! errno: %d", errno);
         }
         else
         {
-            ESP_LOGI(tag_tcp, "Successfully send");
+            ESP_LOGI(tag_socket, "Successfully send");
         } 
                           
     }
@@ -236,7 +284,6 @@ void app_main(void)
     // Initialisation of the LED, NVS, WIFI and the HTTP-Socket
     config_led();
     init_nvs();
-    //Test for NETIF
     esp_netif_init();
     wifi_init_sta();
 
@@ -252,7 +299,8 @@ void app_main(void)
         ESP_LOGI(tag_ringbuffer2, "Ringbuffer 2 created succesfully!");
     }
 
-    connect_tcp();
+    //connect_tcp();
+    connect_udp();
 
     ringbuffer1_mutex = xSemaphoreCreateMutex();
     ringbuffer2_mutex = xSemaphoreCreateMutex();
@@ -260,6 +308,6 @@ void app_main(void)
     esp_timer_create(&sensor_timer_args, &sensor_timer);
     esp_timer_start_periodic(sensor_timer, SENSOR_RATE);
 
-    xTaskCreatePinnedToCore(&tcp_send, "tcp_send", 4096, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(&send_task, "send_task", 4096, NULL, 5, NULL, 1);
     
 }

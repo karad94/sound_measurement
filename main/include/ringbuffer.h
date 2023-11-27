@@ -1,7 +1,21 @@
+/**
+ * @file ringbuffer.h
+ * @author Adam Karsten (a.karsten@ostfalia.de)
+ * @brief Handler for Ringbuffer
+ * @version 0.1
+ * @date 2023-11-27
+ * 
+ * @copyright Copyright (c) 2023
+ * 
+ */
+
 #ifndef __RINGBUFFER_H__
 #define __RINGBUFFER_H__
 
-// Deklaration Struct for Ringbuffer
+/**
+ * @brief Struct and Typedef for Ringbuffer
+ * 
+ */
 struct ringbuffer_handle{
     uint writeIndex;
     uint readIndex;
@@ -11,19 +25,44 @@ struct ringbuffer_handle{
 };
 typedef struct ringbuffer_handle ringbuffer_handle_t;
 
-// Function to initialiaze the buffer
+/**
+ * @brief Initialize and allocate memory for Ringbuffer
+ * 
+ * @param size Size of Ringbuffer
+ * @return ringbuffer_handle_t* Pointer to Ringbuffer
+ */
 ringbuffer_handle_t *init_buffer(uint size);
 
-// Function to write data to buffer
+/**
+ * @brief Write data to Buffer and move Index to next position. Buffer will marked es full, when writeIndex + 1 == readIndex
+ * 
+ * @param buffer Pointer Buffer to which the Data should be written
+ * @param data Data of Type uint32_t
+ */
 void write_to_buffer(ringbuffer_handle_t *buffer, uint32_t data);
 
-// Read data from buffer
+/**
+ * @brief Read data from Buffer and move readIndex to next postion. Buffer will marked es empty, when readIndex == writeIndex
+ * 
+ * @param buffer  Pointer toBuffer from which data should be read
+ * @return uint32_t Data from Buffer
+ */
 uint32_t read_from_buffer(ringbuffer_handle_t *buffer);
 
-// Check if Buffer is full
+/**
+ * @brief Check if Buffer is full
+ * 
+ * @param buffer Pointer to Buffer which should be checked
+ * @return bool TRUE if Buffer is full // else FALSE
+ * 
+ */
 bool is_full(ringbuffer_handle_t *buffer);
 
-// Free allocated Memory
+/**
+ * @brief Free Ringbuffer
+ * 
+ * @param buffer Pointer to Buffer which memory should be free
+ */
 void free_buffer(ringbuffer_handle_t *buffer);
 
 #endif
