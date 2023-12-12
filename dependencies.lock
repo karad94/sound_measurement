@@ -1,15 +1,21 @@
 dependencies:
-  espressif/led_strip:
-    component_hash: c240f82567a37357bef313f76b0df93cb2da025835e525006096ea7e0fd61b4f
+  espressif/coap:
+    component_hash: 05f0a06edec6265ddaf075ccf4034b68a7109ab1159d3c7ea01908166a3f8708
     source:
       service_url: https://api.components.espressif.com/
       type: service
-    version: 2.4.3
+    version: 4.3.4
+  espressif/led_strip:
+    component_hash: ed1d5c6113fa545e20c7be17e6e7c09d43b18fcb43068e2b2b27a412de6a405a
+    source:
+      service_url: https://api.components.espressif.com/
+      type: service
+    version: 2.5.2
   idf:
     component_hash: null
     source:
       type: idf
     version: 5.1.1
-manifest_hash: 525bd24a930559516b1f9261822279a1927926e72b24e92ec39aba5c1091ce54
+manifest_hash: 271892ed6cb18d5e696ac2caa1078d8bf7681a7ea96ddecf3fadc663cd3b305a
 target: esp32s3
 version: 1.0.0

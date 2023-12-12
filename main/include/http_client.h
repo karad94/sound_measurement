@@ -1,6 +1,6 @@
 /**
  * @file http_client.h
- * @@author Adam Karsten (a.karsten@ostfalia.de)
+ * @author Adam Karsten (a.karsten@ostfalia.de)
  * @brief Setup HTTP Client on ESP32 and send data to Host
  * @version 0.1
  * @date 2023-11-27
