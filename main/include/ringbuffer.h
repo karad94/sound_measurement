@@ -19,6 +19,7 @@
 struct ringbuffer_handle{
     uint writeIndex;
     uint readIndex;
+    struct timeval timestamp;
     uint32_t *sensValue;
     int size;
     bool full;
@@ -32,6 +33,14 @@ typedef struct ringbuffer_handle ringbuffer_handle_t;
  * @return ringbuffer_handle_t* Pointer to Ringbuffer
  */
 ringbuffer_handle_t *init_buffer(uint size);
+
+/**
+ * @brief Function to Write the Timestamp, where the Write-Task gets the Mutex for Ringbuffer
+ * 
+ * @param buffer Buffer where the Timestamp should be saved
+ * @param time Timestamp to write to Buffer
+ */
+void write_timestamp_to_buffer(ringbuffer_handle_t *buffer, struct timeval time);
 
 /**
  * @brief Write data to Buffer and move Index to next position. Buffer will marked es full, when writeIndex + 1 == readIndex

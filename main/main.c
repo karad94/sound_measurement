@@ -63,6 +63,11 @@ gptimer_config_t timer_config_stopwatch = {
 int sock;
 struct sockaddr_in server_addr;
 socklen_t server_addr_len = sizeof(server_addr);
+int init_sock;
+struct sockaddr_in init_addr;
+socklen_t init_addr_len = sizeof(init_addr);
+uint8_t startMeasurement = 0;
+uint8_t sensorID;
 
 //CoAP Variables
 coap_context_t *coap_context;
@@ -84,7 +89,10 @@ BaseType_t MutexHolder2 = pdFALSE;
 // Time Variables
 time_t now;
 struct tm timeinfo = {0};
-time_t measuringStart;
+struct timeval measuringStart;
+struct timeval measuringPoint;
+struct timeval beginnSend;
+struct timeval endSend;
 
 /**
  * @brief Initialize non-volatile Storage to manage Wifi-Storage
@@ -132,6 +140,14 @@ void send_task_coap(void *pvParameters);
  */
 int obtain_time(void);
 
+/**
+ * @brief Get the timediff from Timestamp to MeasurementStart
+ * 
+ * @param endTime Timestamp of the end of Measurement
+ * @param startTime Timestamp of MeasurementStart
+ * @return uint32_t Time in in ms
+ */
+uint32_t get_timediff_ms(struct timeval *endTime, struct timeval *startTime);
 
 // CODE
 void init_nvs(void)
@@ -162,7 +178,9 @@ bool write_task(void)
             {
                 MutexHolder1 = pdTRUE;
                 if(!is_full(ringbuffer1))
-                {
+                {   
+                    gettimeofday(&measuringPoint, NULL);
+                    write_timestamp_to_buffer(ringbuffer1, measuringPoint);
                     write_to_buffer(ringbuffer1, testVar);
                 }
                 else
@@ -192,6 +210,8 @@ bool write_task(void)
                 MutexHolder2 = pdTRUE;
                 if(!is_full(ringbuffer2))
                 {
+                    gettimeofday(&measuringPoint, NULL);
+                    write_timestamp_to_buffer(ringbuffer2, measuringPoint);
                     write_to_buffer(ringbuffer2, testVar);
                 }
                 else
@@ -218,9 +238,7 @@ bool write_task(void)
 }
 
 int init_udp(void)
-{
-    int init_sock;
-    struct sockaddr_in init_addr;
+{    
     int err;
     int reg_message = 0;
     int data_port = 0;
@@ -244,6 +262,15 @@ int init_udp(void)
     }
     else{
         ESP_LOGI(tag_socket, "Register send");
+    }
+
+    err = recvfrom(init_sock, &sensorID, sizeof(sensorID), 0, (struct sockaddr *)&server_addr, &server_addr_len);
+    if(err < 0)
+    {
+        ESP_LOGE(tag_socket, "Failed to receive Register ID!");
+    }
+    else{
+        ESP_LOGI(tag_socket, "Received IP: %s and SensorID: %u", inet_ntoa(server_addr.sin_addr), sensorID);
     }
 
     err = recvfrom(init_sock, &data_port, sizeof(data_port), 0, (struct sockaddr *)&server_addr, &server_addr_len);
@@ -275,7 +302,7 @@ void send_task_udp(void *pvParameters)
 {
     int err = 0;
     int lastBufferRead = 2;
-    uint32_t buffer_array[RINGBUFFER_SIZE * 2] = {0};
+    uint32_t buffer_array[(RINGBUFFER_SIZE * 2) + 4] = {0}; // +2 for timestamps +2 for SensorID
     int counter = 0;
     uint64_t time_elapsed;
 
@@ -287,6 +314,10 @@ void send_task_udp(void *pvParameters)
             //gptimer_set_raw_count(stopwatchtimer, 0);
             if (is_full(ringbuffer1))
             {
+                buffer_array[counter] = htonl(sensorID);
+                counter++;
+                buffer_array[counter] = htonl(get_timediff_ms(&ringbuffer1->timestamp, &measuringStart));
+                counter++;
                 while (is_full(ringbuffer1))
                 {
                     buffer_array[counter] = htonl(read_from_buffer(ringbuffer1));
@@ -308,11 +339,14 @@ void send_task_udp(void *pvParameters)
             //gptimer_set_raw_count(stopwatchtimer, 0);
             if (is_full(ringbuffer2))
             {
+                buffer_array[counter] = htonl(sensorID);
+                counter++;
+                buffer_array[counter] = htonl(get_timediff_ms(&ringbuffer2->timestamp, &measuringStart));
+                counter++;
                 while (is_full(ringbuffer2))
                 {
                     buffer_array[counter] = htonl(read_from_buffer(ringbuffer2));
                     counter++;
-                    //ESP_LOGI(tag_ringbuffer2, "ReadIndex: %d, IsFull: %d", ringbuffer2->readIndex, ringbuffer2->full);
                 }
                 //gptimer_get_raw_count(stopwatchtimer, &time_elapsed);  
                 xSemaphoreGive(ringbuffer2_mutex);
@@ -326,18 +360,24 @@ void send_task_udp(void *pvParameters)
             counter = 0;
 
             gptimer_get_raw_count(stopwatchtimer, &time_elapsed);
-            err = sendto(sock, &buffer_array, sizeof(buffer_array), 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
-            gptimer_set_raw_count(stopwatchtimer, 0);    
-            if (err < 0)
+            gettimeofday(&beginnSend, NULL);
+            if (get_timediff_ms(&endSend, &beginnSend) > 40)
             {
-                ESP_LOGE(tag_socket, "Send failed! err: %d", errno);
-                perror("Fehlertext");
-            }
-            else
-            {
-                ESP_LOGI(tag_debug, "Time to send UDP-Package: %llu us", time_elapsed);
-                ESP_LOGI(tag_socket, "Successfully send");
-            }     
+                err = sendto(sock, &buffer_array, sizeof(buffer_array), 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
+                gettimeofday(&endSend, NULL);
+                gptimer_set_raw_count(stopwatchtimer, 0);    
+                if (err < 0)
+                {
+                    ESP_LOGE(tag_socket, "Send failed! err: %d", errno);
+                    perror("Fehlertext");
+                }
+                else
+                {
+                    ESP_LOGI(tag_debug, "Time to send UDP-Package: %llu us", time_elapsed);
+                    ESP_LOGI(tag_socket, "Successfully send");
+                }  
+            }  
+               
         }        
                               
     }
@@ -441,7 +481,7 @@ void send_task_coap(void *pvParameters)
 int obtain_time(void)
 {
     int retry = 0;
-    int retry_max = 10;
+    int retry_max = 5;
 
     esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
     esp_sntp_setservername(0, inet_ntoa(server_addr.sin_addr));
@@ -460,13 +500,32 @@ int obtain_time(void)
     {
         ESP_LOGI(tag_sntp, "SNTP Sync successfull");
         ESP_LOGI(tag_sntp, "Current Servertime is %s", asctime(&timeinfo));
+        set_led(0, 0, 6);
         return 1;
     }
     else
     {
         ESP_LOGE(tag_sntp, "Failed to get Servertime");
+        set_led(0, 6, 0);
         return -1;
     }
+}
+
+uint32_t get_timediff_ms(struct timeval *endTime, struct timeval *startTime)
+{
+    int64_t timediff;
+
+    if(!startTime)
+    {
+        return 0;
+    }
+    else
+    {
+        timediff = ((int64_t)(endTime->tv_sec - startTime->tv_sec) * 1000) + ((int64_t)(endTime->tv_usec - startTime->tv_usec) / 1000);
+
+        return (uint32_t)timediff;
+    }
+    
 }
 
 void app_main(void)
@@ -492,6 +551,7 @@ void app_main(void)
     ringbuffer1_mutex = xSemaphoreCreateMutex();
     ringbuffer2_mutex = xSemaphoreCreateMutex();
     esp_log_level_set(tag_socket, ESP_LOG_ERROR);
+    //esp_log_level_set(tag_debug, ESP_LOG_ERROR);
 
     gptimer_handle_t writetimer = NULL;
     gptimer_config_t timer_config = {
@@ -526,11 +586,20 @@ void app_main(void)
         if(obtain_time() > 0)
         {
 
+            ESP_LOGI(tag_debug, "Wait for Serverstart Signal");
+            //Use of init Addr to receive Broadcast. Dont need to open extra socket for receiving start signal
+            recvfrom(init_sock, &startMeasurement, sizeof(startMeasurement), 0, (struct sockaddr *)&init_addr, &init_addr_len);
+            gettimeofday(&measuringStart, NULL);
+            //localtime_r(&measuringStart, &timeinfo);
+            ESP_LOGI(tag_debug, "Measurement Started at %s", asctime(localtime(&measuringStart.tv_sec)));
+
+            vTaskDelay((sensorID * 10)/portTICK_PERIOD_MS);
+
             gptimer_enable(stopwatchtimer);
             gptimer_start(stopwatchtimer);
             gptimer_enable(writetimer);
             ESP_ERROR_CHECK(gptimer_start(writetimer)); 
-
+            vTaskDelay(1 / portTICK_PERIOD_MS);
             xTaskCreate(&send_task_udp, "send_task_udp", 15000, NULL, 0, NULL);
         }
     }

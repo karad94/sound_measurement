@@ -27,11 +27,16 @@ ringbuffer_handle_t *init_buffer(uint size)
 
     // Init Values
     buffer->writeIndex = 0;
-    buffer->readIndex = 0,
+    buffer->readIndex = 0;
     buffer->size = size;
     buffer->full = false;
 
     return buffer;
+}
+
+void write_timestamp_to_buffer(ringbuffer_handle_t *buffer, struct timeval time)
+{
+    buffer->timestamp = time;
 }
 
 void write_to_buffer(ringbuffer_handle_t *buffer, uint32_t data)
