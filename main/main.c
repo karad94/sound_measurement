@@ -2,8 +2,8 @@
  * @file main.c
  * @author Adam Karsten (a.karsten@ostfalia.de)
  * @brief Task to send Sensordata via Wifi to Host
- * @version 0.5
- * @date 2023-12-09
+ * @version 0.6
+ * @date 2024-01-09
  * 
  * @copyright Copyright (c) 2023
  * 

@@ -2,8 +2,8 @@
  * @file ringbuffer.h
  * @author Adam Karsten (a.karsten@ostfalia.de)
  * @brief Handler for Ringbuffer
- * @version 0.1
- * @date 2023-11-27
+ * @version 0.2
+ * @date 2024-01-09
  * 
  * @copyright Copyright (c) 2023
  * 
